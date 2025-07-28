@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Final Level: Forest Run</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: black;
+    }
+    canvas {
+      display: block;
+      background: url('images/forest.jpg') no-repeat center center;
+      background-size: cover;
+      z-index: 1; /* Canvas is below the text */
+    }
+    #score {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      font-size: 24px;
+      font-family: Arial, sans-serif;
+      color: white;
+      z-index: 10;
+    }
+    #death-screen {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.85);
+      color: white;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      font-size: 2rem;
+      z-index: 999;
+    }
+    #death-screen button {
+      padding: 12px 24px;
+      font-size: 1.2rem;
+      background-color: red;
+      border: none;
+      color: white;
+      cursor: pointer;
+      border-radius: 8px;
+      margin-top: 20px;
+    }
+
+    #obstacle-instructions {
+  position: absolute;
+  top: 10px; /* Distance from the top */
+  right: 10px; /* Distance from the right */
+  background: rgba(0, 0, 0, 0.7); /* Semi-transparent background */
+  color: white; /* Text color */
+  padding: 10px; /* Padding around the text */
+  border-radius: 5px; /* Rounded corners */
+  font-family: Arial, sans-serif; /* Font style */
+  font-size: 14px; /* Font size */
+  line-height: 1.5; /* Space between lines */
+  z-index: 100; /* Ensure it appears above other elements */
+  text-align: left; /* Align text to the left */
+}
+
+#fade-to-black {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: black;
+  opacity: 0;
+  z-index: 1000;
+  pointer-events: none;
+  transition: opacity 1.5s ease-out;
+}
+  </style>
+</head>
+<body>
+  <div id="score">Score: 0</div>
+  <div id="death-screen">
+    <div id="death-message">🐵 You Got Caught!</div>
+    <button onclick="restartGame()">Retry</button>
+  </div>
+
+  <div id="obstacle-instructions">
+    <p>WASD to move</p>
+    <p>Barrier: Jump or Slide</p>
+    <p>Bear Trap: Jump</p>
+    <p>Birds: Slide</p>
+  </div>
+
+  <canvas id="game"></canvas>
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    const lanes = [
+      canvas.width / 4,
+      canvas.width / 2,
+      canvas.width * 3 / 4
+    ];
+    let score = 0;
+    let gameSpeed = 7;
+    let obstacleCount = 1; // Start with one obstacle per spawn
+    let lastMirrorTime = 0;
+    let isMirrored = false;
+
+    // Load player sprites
+    const playerSprites = {
+      run: new Image(),
+      slide: new Image(),
+      jump: new Image(),
+      fall: new Image()
+    };
+    playerSprites.run.src = 'images/level5run.png';
+    playerSprites.slide.src = 'images/level5slide.png';
+    playerSprites.jump.src = 'images/level5jump.png';
+    playerSprites.fall.src = 'images/level5fall.png';
+
+    // Load obstacle sprites (except bonus which stays as circle)
+    const obstacleSprites = {
+      jump: new Image(),
+      slide: new Image(),
+      train: new Image(),
+      barrier: new Image()
+    };
+    obstacleSprites.jump.src = 'images/jump.png';
+    obstacleSprites.slide.src = 'images/slide.png';
+    obstacleSprites.train.src = 'images/jumpslide.png';
+    obstacleSprites.barrier.src = 'null.png';
+
+    const imagesToLoad = [
+  obstacleSprites.jump,
+  obstacleSprites.slide,
+  obstacleSprites.train,
+  obstacleSprites.barrier
+];
+
+let imagesLoaded = 0;
+function startGame() {
+  if (imagesLoaded === imagesToLoad.length) {
+    // All images are loaded, start the game
+    obstacleInterval = setInterval(createObstacle, 1000);
+    gameLoop();
+  }
+}
+
+imagesToLoad.forEach(img => {
+  img.onload = () => {
+    imagesLoaded++;
+    startGame();
+  };
+});
+
+    const monkey = {
+      width: 80,
+      height: 80,
+      x: lanes[1],
+      y: canvas.height - 150,
+      lane: 1,
+      targetX: lanes[1],
+      speedY: 0,
+      gravity: 1,
+      jumpPower: -18,
+      onGround: true,
+      isSliding: false,
+      isFalling: false,
+      slideDuration: 0,
+      currentSprite: 'run'
+    };
+
+    const keys = {};
+    let obstacles = [];
+    let obstacleInterval;
+
+    // Background image and scroll logic
+    const bgImage = new Image();
+    bgImage.src = "images/forest.jpg";
+    let bgOffset = 0;
+
+    function drawBackground() {
+      bgOffset += gameSpeed * 0.2;
+      if (bgOffset >= bgImage.height) {
+        bgOffset = 0;
+      }
+      ctx.drawImage(bgImage, 0, bgOffset - bgImage.height, canvas.width, bgImage.height);
+      ctx.drawImage(bgImage, 0, bgOffset, canvas.width, bgImage.height);
+
+      const fog = ctx.createLinearGradient(0, 0, 0, canvas.height);
+      fog.addColorStop(0, "rgba(255, 255, 255, 0.05)");
+      fog.addColorStop(0.5, "rgba(255, 255, 255, 0.1)");
+      fog.addColorStop(1, "rgba(255, 255, 255, 0.2)");
+      ctx.fillStyle = fog;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    document.addEventListener("keydown", (e) => {
+      keys[e.code] = true;
+      if ((e.code === "ArrowUp" || e.code === "KeyW") && monkey.onGround && !monkey.isSliding) {
+        monkey.speedY = monkey.jumpPower;
+        monkey.onGround = false;
+        monkey.currentSprite = 'jump';
+      }
+      if ((e.code === "ArrowLeft" || e.code === "KeyA") && monkey.lane > 0) {
+        monkey.lane--;
+        monkey.targetX = lanes[monkey.lane];
+      }
+      if ((e.code === "ArrowRight" || e.code === "KeyD") && monkey.lane < lanes.length - 1) {
+        monkey.lane++;
+        monkey.targetX = lanes[monkey.lane];
+      }
+      if ((e.code === "ArrowDown" || e.code === "KeyS") && monkey.onGround) {
+        monkey.isSliding = true;
+        monkey.slideDuration = 40;
+        monkey.currentSprite = 'slide';
+      }
+    });
+
+    document.addEventListener("keyup", (e) => {
+      keys[e.code] = false;
+    });
+
+    function drawMonkey(timestamp) {
+      if (monkey.onGround && !monkey.isSliding && !monkey.isFalling) {
+        monkey.currentSprite = 'run';
+      }
+      if (monkey.currentSprite === 'run' && timestamp - lastMirrorTime > 250) {
+        isMirrored = !isMirrored;
+        lastMirrorTime = timestamp;
+      }
+      const sprite = playerSprites[monkey.currentSprite];
+      if (sprite.complete) {
+        ctx.save();
+        const drawX = monkey.x;
+        const drawY = monkey.y;
+        if (isMirrored && monkey.currentSprite === 'run') {
+          ctx.translate(drawX, 0);
+          ctx.scale(-1, 1);
+          ctx.drawImage(sprite, -monkey.width / 2, drawY, monkey.width, monkey.height);
+        } else {
+          ctx.drawImage(sprite, drawX - monkey.width / 2, drawY, monkey.width, monkey.height);
+        }
+        ctx.restore();
+      } else {
+        ctx.fillStyle = "orange";
+        ctx.fillRect(monkey.x - monkey.width / 2, monkey.y, monkey.width, monkey.height);
+      }
+    }
+
+    function updateMonkey() {
+      monkey.x += (monkey.targetX - monkey.x) * 0.2;
+      monkey.y += monkey.speedY;
+      monkey.speedY += monkey.gravity;
+      if (!monkey.onGround && monkey.speedY > 0) {
+        monkey.isFalling = true;
+        monkey.currentSprite = 'fall';
+      } else {
+        monkey.isFalling = false;
+      }
+      if (monkey.y >= canvas.height - 150) {
+        monkey.y = canvas.height - 150;
+        monkey.speedY = 0;
+        monkey.onGround = true;
+        monkey.isFalling = false;
+        if (!monkey.isSliding) {
+          monkey.currentSprite = 'run';
+        }
+      }
+      if (monkey.isSliding) {
+        monkey.slideDuration--;
+        if (monkey.slideDuration <= 0) {
+          monkey.isSliding = false;
+          monkey.currentSprite = 'run';
+        }
+      }
+    }
+
+    function drawObstacle(ob) {
+  if (ob.type === "bonus") {
+    ctx.fillStyle = "gold";
+    ctx.beginPath();
+    ctx.arc(ob.x + ob.width / 2, ob.y + ob.height / 2, 15, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    const sprite = obstacleSprites[ob.type];
+
+    if (sprite && sprite.complete) {
+      try {
+        ctx.drawImage(sprite, ob.x, ob.y, ob.width, ob.height);
+      } catch (e) {
+        console.error("Error drawing sprite:", e);
+        // Fallback rectangle (only if drawing fails)
+        ctx.fillStyle = "darkblue";
+        ctx.fillRect(ob.x, ob.y, ob.width, ob.height);
+      }
+    } else {
+      // Fallback if image not loaded
+      ctx.fillStyle = 
+        ob.type === "jump" ? "brown" :
+        ob.type === "slide" ? "red" :
+        ob.type === "train" ? "gray" :
+        ob.type === "barrier" ? "white":
+      ctx.fillRect(ob.x, ob.y, ob.width, ob.height);
+    }
+  }
+}
+
+    function updateObstacles() {
+      for (let i = obstacles.length - 1; i >= 0; i--) {
+        const ob = obstacles[i];
+        ob.y += gameSpeed;
+
+        // Check for collision with monkey
+        const monkeyLeft = monkey.x - monkey.width / 2;
+        const monkeyRight = monkey.x + monkey.width / 2;
+        const monkeyTop = monkey.y;
+        const monkeyBottom = monkey.y + monkey.height;
+        const obLeft = ob.x;
+        const obRight = ob.x + ob.width;
+        const obTop = ob.y;
+        const obBottom = ob.y + ob.height;
+        const collided =
+          monkeyRight > obLeft &&
+          monkeyLeft < obRight &&
+          monkeyBottom > obTop &&
+          monkeyTop < obBottom;
+
+        if (collided) {
+          if (ob.type === "bonus") {
+            score += 1;
+            obstacles.splice(i, 1);
+            document.getElementById("score").innerText = `Score: ${score}`;
+            continue;
+          }
+          const failJump = ob.type === "jump" && monkey.onGround;
+          const failSlide = ob.type === "slide" && !monkey.isSliding;
+          const crashTrain = ob.type === "train" && monkey.onGround && !monkey.isSliding;
+          const hitBarrier = ob.type === "barrier";
+
+if (failJump || failSlide || crashTrain || hitBarrier) {
+  endGame();
+  return;
+}
+          if (failJump || failSlide || crashTrain || hitBarrier) {
+            endGame();
+            return;
+          }
+        }
+
+        if (ob.y > canvas.height) {
+          if (ob.type !== "bonus") {
+            score++;
+            gameSpeed += 0.05;
+          }
+          obstacles.splice(i, 1);
+          document.getElementById("score").innerText = `Score: ${score}`;
+        }
+      }
+
+      // Increase obstacle count based on score
+if (score === 20 && obstacleCount < 2) {
+  obstacleCount = 2; // Spawn two obstacles at a time
+} else if (score === 40 && obstacleCount < 3) {
+  obstacleCount = 3; // Spawn three obstacles at a time
+}
+
+if (score >= 50) {
+  cancelAnimationFrame(loop);
+  
+  // Create fade element
+  const fade = document.createElement('div');
+  fade.id = 'fade-to-black';
+  document.body.appendChild(fade);
+  
+  // Trigger fade
+  setTimeout(() => {
+    fade.style.opacity = '1';
+  }, 50);
+  
+  // Redirect after fade completes
+  setTimeout(() => {
+    window.location.href = "ending.html";
+  }, 1600); // 1.5s fade + 100ms buffer
+}
+    }
+    
+    function createObstacle() {
+    let spawnedCount = 0; // Track how many obstacles were successfully spawned
+    for (let i = 0; i < obstacleCount; i++) {
+        const types = ["jump", "slide", "train", "bonus"];
+        const type = types[Math.floor(Math.random() * types.length)];
+        let laneIndex, lane, width, height;
+
+        // Ensure obstacles don't overlap in the same lane
+        let safeSpawn = false;
+        let attempts = 0;
+        const maxAttempts = 10;
+
+        while (!safeSpawn && attempts < maxAttempts) {
+            laneIndex = Math.floor(Math.random() * lanes.length);
+            lane = lanes[laneIndex];
+
+            const minVerticalDistance = Math.min(400, 200 + Math.floor(score / 10) * 20);
+            const isLaneSafe = !obstacles.some(ob => 
+                ob.lane === laneIndex && ob.y > -minVerticalDistance
+            );
+
+            if (isLaneSafe) {
+                safeSpawn = true;
+            } else {
+                attempts++;
+            }
+        }
+
+        if (!safeSpawn) {
+            console.warn("No safe spawn position found. Using fallback lane.");
+            let bestLaneIndex = -1;
+            let maxDistance = -Infinity;
+
+            for (let i = 0; i < lanes.length; i++) {
+                const closestObstacle = obstacles.filter(ob => ob.lane === i)
+                    .reduce((closest, ob) => ob.y > closest.y ? ob : closest, { y: -Infinity });
+
+                if (closestObstacle.y < maxDistance) {
+                    maxDistance = closestObstacle.y;
+                    bestLaneIndex = i;
+                }
+            }
+
+            if (bestLaneIndex !== -1) {
+                laneIndex = bestLaneIndex;
+                lane = lanes[laneIndex];
+                safeSpawn = true;
+            } else {
+                console.warn("All lanes occupied. Forcing spawn in the first lane.");
+                laneIndex = 0;
+                lane = lanes[laneIndex];
+                safeSpawn = true;
+            }
+        } else {
+            spawnedCount++;
+        }
+
+        if (spawnedCount === 0) {
+            console.warn("Failed to spawn any obstacles. Reducing obstacle count.");
+            obstacleCount = Math.max(1, obstacleCount - 1);
+        }
+
+        console.log(`Spawned ${spawnedCount} out of ${obstacleCount} obstacles.`);
+
+        if (type === "slide") {
+            width = 200;
+            height = 100;
+        } else if (type === "train") {
+            width = 200;
+            height = 100;
+        } else if (type === "barrier") {
+            // Duplicate of train's code but for barrier
+            width = 200;
+            height = 100;
+        } else if (type === "bonus") {
+            width = 30;
+            height = 30;
+        } else {
+            width = 200;
+            height = 100;
+        }
+
+        obstacles.push({
+            type,
+            x: lane - width / 2,
+            y: -height,
+            width,
+            height,
+            lane: laneIndex,
+            imageScale: 1
+        });
+    }
+}
+
+    function endGame() {
+      cancelAnimationFrame(loop);
+      document.getElementById("death-screen").style.display = "flex";
+      document.getElementById("death-message").innerText = "🐵 You Got Caught!";
+      gameSpeed = 0;
+      clearInterval(obstacleInterval);
+    }
+
+    function restartGame() {
+      location.reload();
+    }
+
+    let lastTime = 0;
+    let loop;
+    bgImage.onload = () => {
+      gameLoop();
+    };
+
+    function gameLoop(timestamp) {
+  const delta = timestamp - lastTime;
+  lastTime = timestamp;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawBackground();
+  updateMonkey();
+  updateObstacles();
+
+  // First pass: Draw all obstacles except trains when sliding AND except slides
+  obstacles.forEach(ob => {
+    if (!(ob.type === "train" && monkey.isSliding) && ob.type !== "slide") {
+      drawObstacle(ob);
+    }
+  });
+
+  // Second pass: Draw the monkey
+  drawMonkey(timestamp);
+
+  // Third pass: Draw trains when sliding AND slides (both on top)
+  obstacles.forEach(ob => {
+    if ((ob.type === "train" && monkey.isSliding) || ob.type === "slide") {
+      drawObstacle(ob);
+    }
+  });
+
+  loop = requestAnimationFrame(gameLoop);
+}
+
+// Start creating obstacles every second
+obstacleInterval = setInterval(createObstacle, 1000);
+  </script>
+</body>
+</html>
